@@ -20,7 +20,12 @@ To set up the environment for this assignment, you will need to create a new
 
     conda create -n cs234_final_project python=3.8
 
-Once you activate it, run
+Once you activate it, first run:
+
+    brew install cmake openmpi 
+    brew install swig 
+
+Then, run:
 
     pip install -r requirements.txt
 
