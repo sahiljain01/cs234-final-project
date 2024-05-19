@@ -18,7 +18,7 @@ researchers to leverage in their work too.
 To set up the environment for this assignment, you will need to create a new
 `conda` environment.
 
-    conda create -n cs234_final_project python=3.8
+    conda create -n cs234_final_project python=3.10
 
 Once you activate it, first run:
 
