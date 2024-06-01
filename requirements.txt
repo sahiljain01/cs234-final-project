@@ -3,4 +3,4 @@ jupyterlab
 quantstats
 torch_geometric
 torch
-
+modal
