@@ -9,6 +9,7 @@ import logging
 import pandas as pd
 import numpy as np
 import datetime
+import torch
 import yfinance as yf
 
 from finrl.meta.preprocessor.yahoodownloader import YahooDownloader
@@ -55,10 +56,11 @@ def main():
         )
 
    df_t = fe.preprocess_data(df)
+ #    import pdb; pdb.set_trace()
    # df_t = df_t.set_index("date")
    fmt = "%Y-%m-%d"
-   train_df = data_split(df_t, env.TRAIN_START.strftime(fmt), env.TRAIN_END.strftime(fmt))
-   test_df = data_split(df_t, env.TEST_START.strftime(fmt), env.TEST_END.strftime(fmt))
+   train_df = data_split(df, env.TRAIN_START.strftime(fmt), env.TRAIN_END.strftime(fmt))
+   test_df = data_split(df, env.TEST_START.strftime(fmt), env.TEST_END.strftime(fmt))
 
    # setup portfolio optimization env
    # TODO: should we really group by scaler? Is there a better approach?
