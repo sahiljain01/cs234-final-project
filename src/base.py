@@ -16,6 +16,11 @@ from finrl.meta.preprocessor.preprocessors import FeatureEngineer, data_split
 from finrl import config_tickers
 from finrl.config import INDICATORS
 
+from finrl.meta.preprocessor.preprocessors import GroupByScaler
+from finrl.meta.env_portfolio_optimization.env_portfolio_optimization import PortfolioOptimizationEnv
+from finrl.agents.portfolio_optimization.models import DRLAgent
+from finrl.agents.portfolio_optimization.architectures import EIIE
+
 import src.env as env 
 
 def load_data() -> pd.DataFrame:
@@ -55,9 +60,36 @@ def main():
    train_df = data_split(df_t, env.TRAIN_START.strftime(fmt), env.TRAIN_END.strftime(fmt))
    test_df = data_split(df_t, env.TEST_START.strftime(fmt), env.TEST_END.strftime(fmt))
 
-   stock_dimension = len(df_t.tic.unique())
-   import pdb; pdb.set_trace()
+   # setup portfolio optimization env
+   # TODO: should we really group by scaler? Is there a better approach?
+   environment = PortfolioOptimizationEnv(
+           train_df,
+           initial_amount=env.INITIAL_AMT,
+           comission_fee_pct=env.COMISSION_FEE_PCT,
+           time_window=env.TIME_WINDOW,
+           features=env.FEATURES,
+           normalize_df=None
+    )
 
+   model_kwargs = {
+           "lr": env.LR,
+           "policy": env.MODEL
+    }
+
+   policy_kwargs = {
+           "k_size": 3,
+           "time_window": 50
+    }
+
+   device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+   model = DRLAgent(environment).get_model("pg", device, model_kwargs, policy_kwargs)
+   DRLAgent.train_model(model, episodes=40)
+
+
+
+
+
+   
 
 if __name__ == "__main__":
     main()
