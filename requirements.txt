@@ -1,1 +1,6 @@
 git+https://github.com/AI4Finance-Foundation/FinRL.git
+jupyterlab
+quantstats
+torch_geometric
+torch
+
