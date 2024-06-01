@@ -1,4 +1,10 @@
+import sys
 import os
+
+script_path = os.path.abspath(__file__)
+current_file_dir = os.path.dirname(script_path)
+sys.path.insert(0, f"{current_file_dir}/../FinRL/")
+
 import logging
 import pandas as pd
 import numpy as np
@@ -11,8 +17,6 @@ from finrl import config_tickers
 from finrl.config import INDICATORS
 
 import src.env as env 
-
-
 
 def load_data() -> pd.DataFrame:
     # download data
@@ -46,11 +50,14 @@ def main():
         )
 
    df_t = fe.preprocess_data(df)
-   df_t = df_t.set_index("date")
-   train_df = data_split(df_t, env.TRAIN_START, end.TRAIN_END)
-   test_df = data_split(df_t, env.TEST_START, env.TEST_END)
+   # df_t = df_t.set_index("date")
+   fmt = "%Y-%m-%d"
+   train_df = data_split(df_t, env.TRAIN_START.strftime(fmt), env.TRAIN_END.strftime(fmt))
+   test_df = data_split(df_t, env.TEST_START.strftime(fmt), env.TEST_END.strftime(fmt))
 
    stock_dimension = len(df_t.tic.unique())
+   import pdb; pdb.set_trace()
+
 
 if __name__ == "__main__":
     main()
