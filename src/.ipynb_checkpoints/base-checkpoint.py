@@ -56,8 +56,6 @@ def main():
         )
 
    df_t = fe.preprocess_data(df)
- #    import pdb; pdb.set_trace()
-   # df_t = df_t.set_index("date")
    fmt = "%Y-%m-%d"
    train_df = data_split(df, env.TRAIN_START.strftime(fmt), env.TRAIN_END.strftime(fmt))
    test_df = data_split(df, env.TEST_START.strftime(fmt), env.TEST_END.strftime(fmt))
