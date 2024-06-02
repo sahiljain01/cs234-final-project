@@ -1,5 +1,0 @@
-numpy
-pandas
-pytorch
-torch_geometric
-networkx
