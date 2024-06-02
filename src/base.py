@@ -87,6 +87,8 @@ def main():
    model = DRLAgent(environment).get_model("pg", device, model_kwargs, policy_kwargs)
    DRLAgent.train_model(model, episodes=40)
 
+   torch.save(model.train_policy.state_dict(), "policy_EIIE.pt")
+   import pdb; pdb.set_trace()
 
 
 
