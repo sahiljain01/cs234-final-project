@@ -266,7 +266,7 @@ from collections import deque
 import random
 
 
-class ReplayBuffer:
+class CustomReplayBuffer:
     def __init__(self, capacity):
         self.buffer = deque(maxlen=capacity)
 
@@ -282,13 +282,12 @@ class ReplayBuffer:
 class TD3:
     def __init__(
         self,
-        env, #gym env
-        actor_model,
-        critic_model,
+        env, #gym train env
+        actor_critic, #CustomGPM
+        actor_critic_target,
         action_noise=0.1,
         gradient_steps=1,
-        actor_lr=1e-3,
-        critic_lr=1e-3,
+        lr=1e-3,
         tau=0.005,
         gamma=0.99,
         buffer_size=1000000,
@@ -302,35 +301,37 @@ class TD3:
         self.action_noise = action_noise
         self.n_updates = 0
         self.gradient_steps = gradient_steps
-        self.actor = actor_model.to(device)
-        self.actor_target = copy.deepcopy(actor_model).to(device)
-        self.critic_1 = critic_model.to(device)
-        self.critic_2 = copy.deepcopy(critic_model).to(device)
-        self.critic_target_1 = copy.deepcopy(critic_model).to(device)
-        self.critic_target_2 = copy.deepcopy(critic_model).to(device)
-        self.actor_optimizer = Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic_optimizer_1 = Adam(self.critic_1.parameters(), lr=critic_lr)
-        self.critic_optimizer_2 = Adam(self.critic_2.parameters(), lr=critic_lr)
+        self.actor_critic = actor_critic
+        self.actor_critic_target = actor_critic_target
+        self.actor_optimizer = Adam(self.actor_critic.track_actor_parameters(), lr=lr)
+        self.critic1_optimizer = Adam(self.actor_critic.track_critic1_parameters(), lr=lr)
+        self.critic2_optimizer = Adam(self.actor_critic.track_critic2_parameters(), lr=lr)
         self.tau = tau
         self.gamma = gamma
-        self.replay_buffer = ReplayBuffer(capacity=buffer_size)
+        self.replay_buffer = CustomReplayBuffer(capacity=buffer_size)
         self.batch_size = batch_size
         self.target_policy_noise = target_policy_noise
         self.target_noise_clip = target_noise_clip
         self.policy_delay = policy_delay
         self.device = device
 
-    def select_action(self, state):
-        state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
-        action = self.actor(state).cpu().data.numpy().flatten()
-        action = (action + np.random.normal(0, self.action_noise, size=action.shape)).clip(self.env.action_space.low, self.env.action_space.high)
+    def select_action(self, obs):
+        obs_batch = np.expand_dims(obs["state"], axis=0)
+        last_action_batch = np.expand_dims(obs["last_action"], axis=0)
+        action = self.actor_critic(obs_batch, last_action_batch, mode="actor") #tensor(1, portfolio_size+1)
+        action = action.cpu().detach().numpy().squeeze() #np.array(protfolio_size+1,)
+
+        action = (action + np.random.normal(0, self.action_noise, size=action.shape)).clip(self.env.action_space.low,
+                                                                                           self.env.action_space.high)
+        action /= np.sum(action) #portfolio weights sum equals 1
         return action
 
     def train(self, total_steps):
-        state = self.env.reset()
+        state = self.env.reset() #state: space.Dict
         episode_reward = 0
-        for step in range(total_steps):
+        for _ in range(total_steps):
             action = self.select_action(state)
+
             next_state, reward, done, _ = self.env.step(action)
             self.replay_buffer.add((state, action, reward, next_state, done))
             state = next_state
@@ -348,8 +349,13 @@ class TD3:
         for _ in range(self.gradient_steps):
             self.n_updates += 1
             transitions = self.replay_buffer.sample(self.batch_size)
-            states, actions, rewards, next_states, dones = zip(*transitions)
+            states, last_actions, actions, rewards, next_states, _, dones = zip(*[
+                (s['state'], s['last_action'], a, r, ns['state'], ns['last_action'], d) for s, a, r, ns, d in
+                transitions
+            ])
+
             states = torch.FloatTensor(states).to(self.device)
+            last_actions = torch.FloatTensor(last_actions).to(self.device)
             actions = torch.FloatTensor(actions).to(self.device)
             rewards = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
             next_states = torch.FloatTensor(next_states).to(self.device)
@@ -358,39 +364,39 @@ class TD3:
             with torch.no_grad():
                 noise = (torch.randn_like(actions) * self.target_policy_noise).clamp(-self.target_noise_clip,
                                                                                      self.target_noise_clip)
-                next_actions = (self.actor_target(next_states) + noise).clamp(self.env.action_space.low,
-                                                                              self.env.action_space.high)
+                action_low = torch.tensor(self.env.action_space.low, dtype=torch.float32, device=self.device)
+                action_high = torch.tensor(self.env.action_space.high, dtype=torch.float32, device=self.device)
+                next_actions = (self.actor_critic_target(next_states, actions, mode="actor") + noise).clamp(action_low,
+                                                                                                            action_high)
+                next_actions = next_actions / next_actions.sum(dim=1, keepdim=True)  # portfolio weights sum equals 1
+
                 # Compute the target Q values
-                target_Q1 = self.critic_target_1(next_states, next_actions)
-                target_Q2 = self.critic_target_2(next_states, next_actions)
-                target_Q = torch.min(target_Q1, target_Q2)
-                target_Q = rewards + ((1 - dones) * self.gamma * target_Q)
+                target_Q1 = self.actor_critic_target(next_states, next_actions, mode="critic1")
+                target_Q2 = self.actor_critic_target(next_states, next_actions, mode="ciritc2")
+                target_Q = rewards + ((1 - dones) * self.gamma * torch.min(target_Q1, target_Q2))
 
             # Get current Q estimates
-            current_Q1 = self.critic_1(states, actions)
-            current_Q2 = self.critic_2(states, actions)
+            current_Q1 = self.actor_critic(states, actions, mode="critic1")
+            current_Q2 = self.actor_critic(states, actions, mode="critic2")
 
             # Compute critic loss
             critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
-            self.critic_optimizer_1.zero_grad()
-            self.critic_optimizer_2.zero_grad()
+            self.critic1_optimizer.zero_grad()
+            self.critic2_optimizer.zero_grad()
             critic_loss.backward()
-            self.critic_optimizer_1.step()
-            self.critic_optimizer_2.step()
+            self.critic1_optimizer.step()
+            self.critic2_optimizer.step()
 
             # Delayed policy updates
             if self.n_updates % self.policy_delay == 0:
-                actor_loss = -self.critic_1(states, self.actor(states)).mean()
+                actor_loss = -self.actor_critic(states, self.actor_critic(states, last_actions, mode="actor"),
+                                                mode="critic1").mean()
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
                 self.actor_optimizer.step()
 
-                for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-                for param, target_param in zip(self.critic_1.parameters(), self.critic_target_1.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
-                for param, target_param in zip(self.critic_2.parameters(), self.critic_target_2.parameters()):
-                    target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+                for param, target_param in zip(self.actor_critic.parameters(), self.actor_critic_target.parameters()):
+                    target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
 
 
 
@@ -398,7 +404,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
-from torch.utils.data import DataLoader, TensorDataset, SubsetRandomSampler
+from torch.utils.data import DataLoader, TensorDataset
 
 class PPO:
     def __init__(
