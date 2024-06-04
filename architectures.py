@@ -593,29 +593,37 @@ class CustomGPM(nn.Module):
                 out_channels=conv_mid_features,
                 kernel_size=(1, k_short),
             ),
-            nn.ReLU(),
+            nn.BatchNorm2d(conv_mid_features),
+            nn.LeakyReLU(),
+            nn.Dropout2d(dropout_rate),
             nn.Conv2d(
                 in_channels=conv_mid_features,
                 out_channels=conv_final_features,
                 kernel_size=(1, n_short),
             ),
-            nn.ReLU(),
+            nn.BatchNorm2d(conv_final_features),
+            nn.LeakyReLU(),
+            nn.Dropout2d(dropout_rate),
         )
 
         self.mid_term = nn.Sequential(
             nn.Conv2d(
                 in_channels=initial_features, out_channels=conv_mid_features, kernel_size=(1, k_medium)
             ),
-            nn.ReLU(),
+            nn.BatchNorm2d(conv_mid_features),
+            nn.LeakyReLU(),
+            nn.Dropout2d(dropout_rate),
             nn.Conv2d(
                 in_channels=conv_mid_features,
                 out_channels=conv_final_features,
                 kernel_size=(1, n_medium),
             ),
-            nn.ReLU(),
+            nn.BatchNorm2d(conv_final_features),
+            nn.LeakyReLU(),
+            nn.Dropout2d(dropout_rate),
         )
 
-        self.long_term = nn.Sequential(nn.MaxPool2d(kernel_size=(1, n_long)), nn.ReLU())
+        self.long_term = nn.Sequential(nn.MaxPool2d(kernel_size=(1, n_long)), nn.LeakyReLU())
 
         feature_size = 2 * conv_final_features + initial_features
 
@@ -626,7 +634,9 @@ class CustomGPM(nn.Module):
                     RGCNConv(feature_size, feature_size, num_relations),
                     "x, edge_index, edge_type -> x",
                 ),
+                nn.BatchNorm1d(feature_size),
                 nn.LeakyReLU(),
+                nn.Dropout(dropout_rate),
             ]
 
         self.gcn = Sequential("x, edge_index, edge_type", graph_layers_list)
@@ -833,4 +843,3 @@ class CustomGPM(nn.Module):
                 [batch_edge_type, torch.clone(edge_type).detach()]
             )
         return batch_edge_type
-

@@ -340,6 +340,7 @@ class TD3:
         return normalised_action
 
     def train(self, total_steps):
+        self.actor_critic.train()
         state = self.train_env.reset() #state: space.Dict
         episode_reward = 0
 
@@ -354,7 +355,6 @@ class TD3:
                 episode_reward += reward
 
                 if len(self.replay_buffer) > self.batch_size:
-                    print("update_network")
                     self.update_network()
 
                 if done:
@@ -379,24 +379,10 @@ class TD3:
 
                 pbar.update(1)
 
-        state = self.train_env.reset()
-        print(f"Episode reward: {episode_reward}")
-        episode_reward = 0
-        print("starting testing")
+        print("start testing")
         self.test()
         test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
         print(f"Validation log return: {test_log_return}")
-
-        # Early stopping check
-        if test_log_return - self.prev_test_log_return < self.early_stopping_threshold:
-            self.no_improvement_count += 1
-            if self.no_improvement_count >= self.tolerance:
-                print("Early stopping criteria met. Training stopped.")
-                return
-        else:
-            self.no_improvement_count = 0
-
-        self.prev_test_log_return = test_log_return
 
     def update_network(self):
         for _ in range(self.gradient_steps):
@@ -454,6 +440,7 @@ class TD3:
 
     def test(self):
         self.test_policy_net = copy.deepcopy(self.actor_critic).to(self.device)
+        self.test_policy_net.eval()
         self.test_optimizer = Adam(self.test_policy_net.track_actor_parameters(), lr=self.lr)
 
         # replay buffer
@@ -506,7 +493,6 @@ class TD3:
                 self.test_optimizer.step()
 
             obs = next_obs
-
 
 
 import torch
