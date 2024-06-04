@@ -1,0 +1,24 @@
+<changelist name="Uncommitted_changes_before_Update_at_04_06_2024,_16_37_[Changes]" date="1717515456364" recycled="false" toDelete="true">
+  <option name="PATH" value="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_04_06_2024,_16_37_[Changes]/shelved.patch" />
+  <option name="DESCRIPTION" value="Uncommitted changes before Update at 04/06/2024, 16:37 [Changes]" />
+  <binary>
+    <option name="BEFORE_PATH" />
+    <option name="AFTER_PATH" value="src/data/2010-01-01_2024-01-01_S&amp;P500.pkl" />
+    <option name="SHELVED_PATH" value="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_04_06_2024,_16_37_[Changes]/2010-01-01_2024-01-01_S&amp;P500.pkl" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" />
+    <option name="AFTER_PATH" value="src/data/2010-01-01 00:00:00-2024-01-01 00:00:00-S&amp;P500.pkl" />
+    <option name="SHELVED_PATH" value="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_04_06_2024,_16_37_[Changes]/2010-01-01 00:00:00-2024-01-01 00:00:00-S&amp;P500.pkl" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" />
+    <option name="AFTER_PATH" value="src/main.zip" />
+    <option name="SHELVED_PATH" value="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_04_06_2024,_16_37_[Changes]/main.zip" />
+  </binary>
+  <binary>
+    <option name="BEFORE_PATH" />
+    <option name="AFTER_PATH" value="src/test_plot.png" />
+    <option name="SHELVED_PATH" value="$PROJECT_DIR$/.idea/shelf/Uncommitted_changes_before_Update_at_04_06_2024,_16_37_[Changes]/test_plot.png" />
+  </binary>
+</changelist>
