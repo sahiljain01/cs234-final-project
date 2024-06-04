@@ -264,6 +264,8 @@ from torch.optim import Adam
 import copy
 from collections import deque
 import random
+from tqdm import tqdm
+from math import log
 
 
 class CustomReplayBuffer:
@@ -271,6 +273,8 @@ class CustomReplayBuffer:
         self.buffer = deque(maxlen=capacity)
 
     def add(self, experience):
+        if len(self.buffer) == self.buffer.maxlen:
+            self.buffer.popleft()  # remove the history experience
         self.buffer.append(experience)
 
     def sample(self, batch_size):
@@ -282,7 +286,8 @@ class CustomReplayBuffer:
 class TD3:
     def __init__(
         self,
-        env, #gym train env
+        train_env, #gym train env
+        test_env, #gym_test_env
         actor_critic, #CustomGPM
         actor_critic_target,
         action_noise=0.1,
@@ -290,16 +295,20 @@ class TD3:
         lr=1e-3,
         tau=0.005,
         gamma=0.99,
-        buffer_size=1000000,
+        buffer_size=256,
         batch_size=100,
         target_policy_noise=0.2,
         target_noise_clip=0.5,
         policy_delay=2,
-        device="cpu"
+        device="cpu",
+        early_stopping_threshold=0.01,
+        tolerance=10, #episodes
     ):
-        self.env = env
+        self.train_env = train_env
+        self.test_env = test_env
         self.action_noise = action_noise
         self.n_updates = 0
+        self.lr = lr
         self.gradient_steps = gradient_steps
         self.actor_critic = actor_critic
         self.actor_critic_target = actor_critic_target
@@ -314,6 +323,10 @@ class TD3:
         self.target_noise_clip = target_noise_clip
         self.policy_delay = policy_delay
         self.device = device
+        self.early_stopping_threshold = early_stopping_threshold
+        self.tolerance = tolerance
+        self.prev_test_log_return = float('inf')
+        self.no_improvement_count = 0
 
     def select_action(self, obs):
         obs_batch = np.expand_dims(obs["state"], axis=0)
@@ -321,29 +334,69 @@ class TD3:
         action = self.actor_critic(obs_batch, last_action_batch, mode="actor") #tensor(1, portfolio_size+1)
         action = action.cpu().detach().numpy().squeeze() #np.array(protfolio_size+1,)
 
-        action = (action + np.random.normal(0, self.action_noise, size=action.shape)).clip(self.env.action_space.low,
-                                                                                           self.env.action_space.high)
-        action /= np.sum(action) #portfolio weights sum equals 1
-        return action
+        action = (action + np.random.normal(0, self.action_noise, size=action.shape)).clip(self.train_env.action_space.low,
+                                                                                           self.train_env.action_space.high)
+        normalised_action = np.exp(action) / np.sum(np.exp(action)) #portfolio weights sum equals 1
+        return normalised_action
 
     def train(self, total_steps):
-        state = self.env.reset() #state: space.Dict
+        state = self.train_env.reset() #state: space.Dict
         episode_reward = 0
-        for _ in range(total_steps):
-            action = self.select_action(state)
 
-            next_state, reward, done, _ = self.env.step(action)
-            self.replay_buffer.add((state, action, reward, next_state, done))
-            state = next_state
-            episode_reward += reward
+        with tqdm(total=total_steps, desc="Train: ") as pbar:
+            for _ in range(total_steps):
+                action = self.select_action(state)
 
-            if len(self.replay_buffer) > self.batch_size:
-                self.update_network()
+                next_state, reward, done, _ = self.train_env.step(action)
+                print("the log return r_t = log p_t/p_t-1 is ", reward)
+                self.replay_buffer.add((state, action, reward, next_state, done))
+                state = next_state
+                episode_reward += reward
 
-            if done:
-                state = self.env.reset()
-                print(f"Episode reward: {episode_reward}")
-                episode_reward = 0
+                if len(self.replay_buffer) > self.batch_size:
+                    print("update_network")
+                    self.update_network()
+
+                if done:
+                    state = self.train_env.reset()
+                    print(f"Episode reward: {episode_reward}")
+                    episode_reward = 0
+
+                    self.test()
+                    test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
+                    print(f"Validation log return: {test_log_return}")
+
+                    # Early stopping check
+                    if test_log_return - self.prev_test_log_return < self.early_stopping_threshold:
+                        self.no_improvement_count += 1
+                        if self.no_improvement_count >= self.tolerance:
+                            print("Early stopping criteria met. Training stopped.")
+                            return
+                    else:
+                        self.no_improvement_count = 0
+
+                    self.prev_test_log_return = test_log_return
+
+                pbar.update(1)
+
+        state = self.train_env.reset()
+        print(f"Episode reward: {episode_reward}")
+        episode_reward = 0
+        print("starting testing")
+        self.test()
+        test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
+        print(f"Validation log return: {test_log_return}")
+
+        # Early stopping check
+        if test_log_return - self.prev_test_log_return < self.early_stopping_threshold:
+            self.no_improvement_count += 1
+            if self.no_improvement_count >= self.tolerance:
+                print("Early stopping criteria met. Training stopped.")
+                return
+        else:
+            self.no_improvement_count = 0
+
+        self.prev_test_log_return = test_log_return
 
     def update_network(self):
         for _ in range(self.gradient_steps):
@@ -354,21 +407,22 @@ class TD3:
                 transitions
             ])
 
-            states = torch.FloatTensor(states).to(self.device)
-            last_actions = torch.FloatTensor(last_actions).to(self.device)
-            actions = torch.FloatTensor(actions).to(self.device)
-            rewards = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
-            next_states = torch.FloatTensor(next_states).to(self.device)
-            dones = torch.FloatTensor(dones).unsqueeze(1).to(self.device)
+            states = torch.FloatTensor(np.array(states)).to(self.device)
+            last_actions = torch.FloatTensor(np.array(last_actions)).to(self.device)
+            actions = torch.FloatTensor(np.array(actions)).to(self.device)
+            rewards = torch.FloatTensor(np.array(rewards)).unsqueeze(1).to(self.device)
+            next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
+            dones = torch.FloatTensor(np.array(dones)).unsqueeze(1).to(self.device)
 
             with torch.no_grad():
                 noise = (torch.randn_like(actions) * self.target_policy_noise).clamp(-self.target_noise_clip,
                                                                                      self.target_noise_clip)
-                action_low = torch.tensor(self.env.action_space.low, dtype=torch.float32, device=self.device)
-                action_high = torch.tensor(self.env.action_space.high, dtype=torch.float32, device=self.device)
+
+                action_low = torch.tensor(self.train_env.action_space.low, dtype=torch.float32, device=self.device)
+                action_high = torch.tensor(self.train_env.action_space.high, dtype=torch.float32, device=self.device)
                 next_actions = (self.actor_critic_target(next_states, actions, mode="actor") + noise).clamp(action_low,
                                                                                                             action_high)
-                next_actions = next_actions / next_actions.sum(dim=1, keepdim=True)  # portfolio weights sum equals 1
+                next_actions = torch.softmax(next_actions, dim=1)  # portfolio weights sum equals 1
 
                 # Compute the target Q values
                 target_Q1 = self.actor_critic_target(next_states, next_actions, mode="critic1")
@@ -397,6 +451,61 @@ class TD3:
 
                 for param, target_param in zip(self.actor_critic.parameters(), self.actor_critic_target.parameters()):
                     target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
+
+    def test(self):
+        self.test_policy_net = copy.deepcopy(self.actor_critic).to(self.device)
+        self.test_optimizer = Adam(self.test_policy_net.track_actor_parameters(), lr=self.lr)
+
+        # replay buffer
+        self.test_buffer = ReplayBuffer(capacity=self.batch_size)
+
+        obs = self.test_env.reset()  # observation
+        done = False
+        steps = 0
+
+        while not done:
+            steps += 1
+            # define last_action and action and update portfolio vector memory
+            last_action = obs["last_action"]
+            obs = obs["state"]
+            obs_batch = np.expand_dims(obs, axis=0)
+            last_action_batch = np.expand_dims(last_action, axis=0)
+
+            action = self.test_policy_net(obs_batch, last_action_batch, mode="actor")
+            action = action.cpu().detach().numpy().squeeze()
+
+            # run simulation step
+            next_obs, reward, done, info = self.test_env.step(action)
+
+            # add experience to replay buffer
+            exp = (obs, last_action, info["price_variation"], info["trf_mu"])
+            self.test_buffer.append(exp)
+
+            # update policy networks
+            if steps % self.batch_size == 0:
+                print("update policy net when testing")
+                exps = self.test_buffer.sample()
+                obs, last_actions, price_variations, trf_mu = zip(*exps)
+
+
+                obs = torch.FloatTensor(np.array(obs)).to(self.device)
+                last_actions = torch.FloatTensor(np.array(last_actions)).to(self.device)
+                price_variations = torch.FloatTensor(np.array(price_variations)).to(self.device)
+                trf_mu = torch.FloatTensor(np.array(trf_mu)).unsqueeze(1).to(self.device)
+
+                # define policy loss (negative for gradient ascent)
+                weights = self.test_policy_net(obs, last_actions, mode="actor")
+
+                policy_loss = -torch.mean(
+                    torch.log(torch.sum(weights * price_variations * trf_mu, dim=1))
+                )
+
+                # update policy network
+                self.test_policy_net.zero_grad()
+                policy_loss.backward()
+                self.test_optimizer.step()
+
+            obs = next_obs
 
 
 

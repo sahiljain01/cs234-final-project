@@ -59,8 +59,21 @@ environment_train = PortfolioOptimizationEnv(
     return_last_action=True
 )
 
+environment_test = PortfolioOptimizationEnv(
+    df_portfolio_test,
+    initial_amount=100000,
+    comission_fee_pct=0.0025,
+    time_window=50,
+    features=["close", "high", "low"],
+    time_column="day",
+    normalize_df=None,
+    tics_in_portfolio=tics_in_portfolio,
+    return_last_action=True
+)
+
+
 actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
 actor_critic_target = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
-model_td3 = TD3(environment_train, actor_critic, actor_critic_target)
+model_td3 = TD3(environment_train, environment_test, actor_critic, actor_critic_target, batch_size=10)
 print("start training")
-model_td3.train(10000)
+model_td3.train(20)
