@@ -50,6 +50,7 @@
     "Python.env.executor": "Run",
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
+    "WebServerToolWindowFactoryState": "false",
     "last_opened_file_path": "/Users/neel/PycharmProjects/cs234-final-project/src",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
@@ -88,6 +89,7 @@
       <workItem from="1717335548326" duration="2368000" />
       <workItem from="1717337924103" duration="77367000" />
       <workItem from="1717515859441" duration="1276000" />
+      <workItem from="1717552131502" duration="559000" />
     </task>
     <task id="LOCAL-00001" summary="Experiments using GPM">
       <option name="closed" value="true" />
@@ -151,7 +153,7 @@
     <option name="LAST_COMMIT_MESSAGE" value="Experiments using GPM" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/cs234_final_project$env.coverage" NAME="env Coverage Results" MODIFIED="1717429352786" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
     <SUITE FILE_PATH="coverage/cs234_final_project$Neel_GPM_test.coverage" NAME="Neel_GPM_test Coverage Results" MODIFIED="1717338932429" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
+    <SUITE FILE_PATH="coverage/cs234_final_project$env.coverage" NAME="env Coverage Results" MODIFIED="1717429352786" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
   </component>
 </project>

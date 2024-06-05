@@ -76,9 +76,81 @@ actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
 actor_critic_target = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
 model_td3 = TD3(environment_train, environment_test, actor_critic, actor_critic_target, batch_size=10)
 print("start training")
-model_td3.train(20)
+model_td3.train(10)
 '''
 actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
 model_ppo = PPO(environment_train, environment_test, actor_critic, buffer_size=10, minibatch_size=5, num_episodes=1)
 print("start training")
 model_ppo.run()'''
+
+#save model
+save_dir = "models"
+filename = "TD3_GPM_.pt"
+save_path = os.path.join(save_dir, filename)
+
+# Create the directory if it does not exist
+os.makedirs(save_dir, exist_ok=True)
+
+torch.save(model_td3.actor_critic.state_dict(), save_path)
+print(f"Model saved to {save_path}")
+
+GPM_results = {
+    "train": environment_train._asset_memory["final"],
+    "test": environment_test._asset_memory["final"]
+}
+
+#test uniform buy and hold (ubah)
+UBAH_results = {
+    "train": {},
+    "test": {},
+}
+
+PORTFOLIO_SIZE = len(tics_in_portfolio)
+
+# train period
+terminated = False
+environment_train.reset()
+while not terminated:
+    action = [0] + [1/PORTFOLIO_SIZE] * PORTFOLIO_SIZE
+    _, _, terminated, _ = environment_train.step(action)
+UBAH_results["train"] = environment_train._asset_memory["final"]
+
+# test period
+terminated = False
+environment_test.reset()
+while not terminated:
+    action = [0] + [1/PORTFOLIO_SIZE] * PORTFOLIO_SIZE
+    _, _, terminated, _ = environment_test.step(action)
+UBAH_results["test"] = environment_test._asset_memory["final"]
+
+#saving plots
+import matplotlib.pyplot as plt
+
+save_dir = "plots"
+os.makedirs(save_dir, exist_ok=True)
+
+plt.plot(UBAH_results["train"], label="Buy and Hold")
+plt.plot(GPM_results["train"], label="GPM")
+
+plt.xlabel("Days")
+plt.ylabel("Portfolio Value")
+plt.title("Performance in training period")
+plt.legend()
+train_plot_path = os.path.join(save_dir, "performance_training_period.png")
+plt.savefig(train_plot_path)
+plt.show()
+
+plt.figure()
+plt.plot(UBAH_results["test"], label="Buy and Hold")
+plt.plot(GPM_results["test"], label="GPM")
+
+plt.xlabel("Days")
+plt.ylabel("Portfolio Value")
+plt.title("Performance in testing period")
+plt.legend()
+test_plot_path = os.path.join(save_dir, "performance_testing_period.png")
+plt.savefig(test_plot_path)
+plt.show()
+
+print(f"Training plot saved to {train_plot_path}")
+print(f"Testing plot saved to {test_plot_path}")

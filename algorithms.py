@@ -295,14 +295,14 @@ class TD3:
         lr=1e-3,
         tau=0.005,
         gamma=0.99,
-        buffer_size=256,
-        batch_size=100,
+        buffer_size=2048,
+        batch_size=64,
         target_policy_noise=0.2,
         target_noise_clip=0.5,
         policy_delay=2,
         device="cpu",
         early_stopping_threshold=0.01,
-        tolerance=10, #episodes
+        tolerance=3, #episodes
     ):
         self.train_env = train_env
         self.test_env = test_env
@@ -310,8 +310,8 @@ class TD3:
         self.n_updates = 0
         self.lr = lr
         self.gradient_steps = gradient_steps
-        self.actor_critic = actor_critic
-        self.actor_critic_target = actor_critic_target
+        self.actor_critic = actor_critic.to(device)
+        self.actor_critic_target = actor_critic_target.to(device)
         self.actor_optimizer = Adam(self.actor_critic.track_actor_parameters(), lr=lr)
         self.critic1_optimizer = Adam(self.actor_critic.track_critic1_parameters(), lr=lr)
         self.critic2_optimizer = Adam(self.actor_critic.track_critic2_parameters(), lr=lr)
@@ -325,12 +325,12 @@ class TD3:
         self.device = device
         self.early_stopping_threshold = early_stopping_threshold
         self.tolerance = tolerance
-        self.prev_test_log_return = float('inf')
+        self.prev_test_log_return = -float('inf')
         self.no_improvement_count = 0
 
     def select_action(self, obs):
-        obs_batch = np.expand_dims(obs["state"], axis=0)
-        last_action_batch = np.expand_dims(obs["last_action"], axis=0)
+        obs_batch = torch.from_numpy(np.expand_dims(obs["state"], axis=0)).to(self.device)
+        last_action_batch = torch.from_numpy(np.expand_dims(obs["last_action"], axis=0)).to(self.device)
         action = self.actor_critic(obs_batch, last_action_batch, mode="actor") #tensor(1, portfolio_size+1)
         action = action.cpu().detach().numpy().squeeze() #np.array(protfolio_size+1,)
 
@@ -339,50 +339,47 @@ class TD3:
         normalised_action = np.exp(action) / np.sum(np.exp(action)) #portfolio weights sum equals 1
         return normalised_action
 
-    def train(self, total_steps):
+    def train(self, total_episodes):
         self.actor_critic.train()
-        state = self.train_env.reset() #state: space.Dict
-        episode_reward = 0
 
-        with tqdm(total=total_steps, desc="Train: ") as pbar:
-            for _ in range(total_steps):
-                action = self.select_action(state)
+        with tqdm(total=total_episodes, desc="Train: ") as pbar:
+            for episode in range(total_episodes):
+                print("start episode ", episode + 1)
+                state = self.train_env.reset()  # state: space.Dict
+                episode_reward = 0
+                done = False
+                while not done:
+                    action = self.select_action(state)
 
-                next_state, reward, done, _ = self.train_env.step(action)
-                print("the log return r_t = log p_t/p_t-1 is ", reward)
-                self.replay_buffer.add((state, action, reward, next_state, done))
-                state = next_state
-                episode_reward += reward
+                    next_state, reward, done, _ = self.train_env.step(action)
+                    self.replay_buffer.add((state, action, reward, next_state, done))
+                    state = next_state
+                    episode_reward += reward
 
-                if len(self.replay_buffer) > self.batch_size:
-                    self.update_network()
+                    if len(self.replay_buffer) > self.batch_size:
+                        print("update network during training")
+                        self.update_network()
 
-                if done:
-                    state = self.train_env.reset()
-                    print(f"Episode reward: {episode_reward}")
-                    episode_reward = 0
+                print("done!")
+                print(f"Episode reward: {episode_reward}")
+                print("start validation/testing")
 
-                    self.test()
-                    test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
-                    print(f"Validation log return: {test_log_return}")
+                self.test()
+                test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
+                print(f"Validation log return: {test_log_return}")
 
-                    # Early stopping check
-                    if test_log_return - self.prev_test_log_return < self.early_stopping_threshold:
-                        self.no_improvement_count += 1
-                        if self.no_improvement_count >= self.tolerance:
-                            print("Early stopping criteria met. Training stopped.")
-                            return
-                    else:
-                        self.no_improvement_count = 0
+                # Early stopping check
+                if test_log_return - self.prev_test_log_return < self.early_stopping_threshold:
+                    self.no_improvement_count += 1
+                    if self.no_improvement_count >= self.tolerance:
+                        print("Early stopping criteria met. Training stopped.")
+                        return
+                else:
+                    self.no_improvement_count = 0
 
-                    self.prev_test_log_return = test_log_return
+                self.prev_test_log_return = test_log_return
 
                 pbar.update(1)
-
-        print("start testing")
-        self.test()
-        test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
-        print(f"Validation log return: {test_log_return}")
 
     def update_network(self):
         for _ in range(self.gradient_steps):
@@ -455,8 +452,8 @@ class TD3:
             # define last_action and action and update portfolio vector memory
             last_action = obs["last_action"]
             obs = obs["state"]
-            obs_batch = np.expand_dims(obs, axis=0)
-            last_action_batch = np.expand_dims(last_action, axis=0)
+            obs_batch = torch.from_numpy(np.expand_dims(obs, axis=0)).to(self.device)
+            last_action_batch = torch.from_numpy(np.expand_dims(last_action, axis=0)).to(self.device)
 
             action = self.test_policy_net(obs_batch, last_action_batch, mode="actor")
             action = action.cpu().detach().numpy().squeeze()
