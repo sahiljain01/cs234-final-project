@@ -4,7 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="948adbb8-e6e3-47c9-ad78-1e4d1106dd00" name="Changes" comment="Experiments using GPM" />
+    <list default="true" id="948adbb8-e6e3-47c9-ad78-1e4d1106dd00" name="Changes" comment="Experiments using GPM">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/algorithms.py" beforeDir="false" afterPath="$PROJECT_DIR$/algorithms.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -51,7 +54,7 @@
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "WebServerToolWindowFactoryState": "false",
-    "last_opened_file_path": "/Users/neel/PycharmProjects/cs234-final-project/src",
+    "last_opened_file_path": "/Users/haoyuwang/PycharmProjects/cs234-final-project",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
@@ -90,6 +93,7 @@
       <workItem from="1717337924103" duration="77367000" />
       <workItem from="1717515859441" duration="1276000" />
       <workItem from="1717552131502" duration="559000" />
+      <workItem from="1717572028877" duration="1029000" />
     </task>
     <task id="LOCAL-00001" summary="Experiments using GPM">
       <option name="closed" value="true" />

@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import pandas as pd
+import os
 
 from torch_geometric.utils import k_hop_subgraph
 
@@ -8,7 +9,7 @@ from finrl.meta.preprocessor.yahoodownloader import YahooDownloader
 from finrl.meta.env_portfolio_optimization.env_portfolio_optimization import PortfolioOptimizationEnv
 from finrl.agents.portfolio_optimization.models import DRLAgent
 from finrl.agents.portfolio_optimization.architectures import CustomGPM
-from finrl.agents.portfolio_optimization.algorithms import TD3
+from finrl.agents.portfolio_optimization.algorithms import TD3, PPO
 
 import logging
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -71,18 +72,6 @@ environment_test = PortfolioOptimizationEnv(
     return_last_action=True
 )
 
-
-actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
-actor_critic_target = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
-model_td3 = TD3(environment_train, environment_test, actor_critic, actor_critic_target, batch_size=10)
-print("start training")
-model_td3.train(10)
-'''
-actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
-model_ppo = PPO(environment_train, environment_test, actor_critic, buffer_size=10, minibatch_size=5, num_episodes=1)
-print("start training")
-model_ppo.run()'''
-
 #save model
 save_dir = "models"
 filename = "TD3_GPM_.pt"
@@ -91,11 +80,19 @@ save_path = os.path.join(save_dir, filename)
 # Create the directory if it does not exist
 os.makedirs(save_dir, exist_ok=True)
 
-torch.save(model_td3.actor_critic.state_dict(), save_path)
-print(f"Model saved to {save_path}")
+actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
+actor_critic_target = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
+model_td3 = TD3(environment_train, environment_test, save_path, actor_critic, actor_critic_target, batch_size=10)
+print("start training")
+train_results = model_td3.train(2)
+'''
+actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
+model_ppo = PPO(environment_train, environment_test, actor_critic, buffer_size=10, minibatch_size=5, num_episodes=1)
+print("start training")
+model_ppo.run()'''
 
 GPM_results = {
-    "train": environment_train._asset_memory["final"],
+    "train": train_results,
     "test": environment_test._asset_memory["final"]
 }
 

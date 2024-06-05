@@ -288,6 +288,7 @@ class TD3:
         self,
         train_env, #gym train env
         test_env, #gym_test_env
+        best_model_path,
         actor_critic, #CustomGPM
         actor_critic_target,
         action_noise=0.1,
@@ -306,6 +307,7 @@ class TD3:
     ):
         self.train_env = train_env
         self.test_env = test_env
+        self.best_model_path = best_model_path
         self.action_noise = action_noise
         self.n_updates = 0
         self.lr = lr
@@ -341,6 +343,7 @@ class TD3:
 
     def train(self, total_episodes):
         self.actor_critic.train()
+        best_train_results = []
 
         with tqdm(total=total_episodes, desc="Train: ") as pbar:
             for episode in range(total_episodes):
@@ -371,15 +374,27 @@ class TD3:
                 # Early stopping check
                 if test_log_return - self.prev_test_log_return < self.early_stopping_threshold:
                     self.no_improvement_count += 1
+                    print("no improvement")
                     if self.no_improvement_count >= self.tolerance:
                         print("Early stopping criteria met. Training stopped.")
-                        return
+                        break
                 else:
                     self.no_improvement_count = 0
-
-                self.prev_test_log_return = test_log_return
+                    self.prev_test_log_return = test_log_return
+                    best_train_results = self.train_env._asset_memory["final"]
+                    torch.save(self.actor_critic.state_dict(), self.best_model_path)
+                    print(f"Model saved to {self.best_model_path}")
 
                 pbar.update(1)
+
+        print("start testing")
+        # Load the best model and run the final test
+        self.actor_critic.load_state_dict(torch.load(self.best_model_path))
+        self.test()
+        test_log_return = log(self.test_env._portfolio_value / self.test_env._asset_memory["final"][0])
+        print(f"Validation log return: {test_log_return}")
+
+        return best_train_results
 
     def update_network(self):
         for _ in range(self.gradient_steps):
@@ -490,6 +505,7 @@ class TD3:
                 self.test_optimizer.step()
 
             obs = next_obs
+
 
 
 import torch
