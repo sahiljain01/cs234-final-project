@@ -77,3 +77,8 @@ actor_critic_target = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
 model_td3 = TD3(environment_train, environment_test, actor_critic, actor_critic_target, batch_size=10)
 print("start training")
 model_td3.train(20)
+'''
+actor_critic = CustomGPM(new_edge_index, new_edge_type, nodes_to_select)
+model_ppo = PPO(environment_train, environment_test, actor_critic, buffer_size=10, minibatch_size=5, num_episodes=1)
+print("start training")
+model_ppo.run()'''

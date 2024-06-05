@@ -500,14 +500,17 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
 from torch.utils.data import DataLoader, TensorDataset
+import torch.autograd
+
+torch.autograd.set_detect_anomaly(True)
 
 class PPO:
     def __init__(
         self,
-        env,
-        actor_model,
-        critic_model,
-        lr=1e-4,
+        train_env,
+        test_env,
+        actor_critic,
+        lr=1e-3,
         ent_coef=0.01,
         gamma=0.99,
         clip_epsilon=0.2,
@@ -518,7 +521,8 @@ class PPO:
         ppo_epochs=2,
         device="cpu"
     ):
-        self.env = env
+        self.train_env = train_env
+        self.test_env = test_env
         self.gamma = gamma
         self.ent_coef = ent_coef,
         self.clip_epsilon = clip_epsilon
@@ -528,67 +532,76 @@ class PPO:
         self.num_episodes = num_episodes
         self.ppo_epochs = ppo_epochs
 
-        self.actor = actor_model.to(device)
-        self.critic = critic_model.to(device)
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr)
+        self.actor_critic = actor_critic.to(device)
+        self.log_std = nn.Parameter(torch.zeros(self.train_env.portfolio_size + 1)).to(device)
+        self.actor_optimizer = Adam(self.actor_critic.track_actor_parameters(), lr=lr)
+        self.value_optimizer = Adam(self.actor_critic.track_value_parameters(), lr=lr)
 
         self.device = device
-        self.replay_buffer = []
+        self.train_replay_buffer = ReplayBuffer(capacity=buffer_size)
 
-    def select_action(self, state):
-        state = torch.FloatTensor(state).to(self.device).unsqueeze(0)
+    def select_action(self, obs):
+        obs_batch = torch.from_numpy(np.expand_dims(obs["state"], axis=0)).to(self.device)
+        last_action_batch = torch.from_numpy(np.expand_dims(obs["last_action"], axis=0)).to(self.device)
+
         with torch.no_grad():
-            mean, log_std = self.actor(state)
-            std = torch.exp(log_std)
+            mean = self.actor_critic(obs_batch, last_action_batch, mode="actor")
+            std = torch.exp(self.log_std)
         dist = Normal(mean, std)
         action = dist.sample()
-        log_prob = dist.log_prob(action)
+        log_prob = dist.log_prob(action).sum()
+        entropy = dist.entropy().sum()
 
         # Clipping action to the valid range
-        action = torch.clamp(action, min=-1.0, max=1.0).squeeze(0)
+        action = torch.softmax(torch.clamp(action, min=-1.0, max=1.0), dim=1).squeeze(0)
 
-        return action.cpu().numpy(), log_prob.item(), dist.entropy().item()
+        return action.cpu().numpy(), log_prob.item(), entropy.item()
 
     def store_transition(self, transition):
-        self.replay_buffer.append(transition)
+        self.train_replay_buffer.append(transition)
 
     def train(self):
+        states, last_actions, actions, action_log_probs, rs, next_states, _, ds, entropies = zip(*self.train_replay_buffer.sample())
 
-        states, actions, action_log_probs, rs, next_states, ds, entropies = zip(*self.replay_buffer)
-        states = torch.FloatTensor(states).to(self.device)
-        actions = torch.FloatTensor(actions).to(self.device)
-        action_log_probs = torch.FloatTensor(action_log_probs).unsqueeze(1).to(self.device)
-        rewards = torch.FloatTensor(rs).unsqueeze(1).to(self.device)
-        next_states = torch.FloatTensor(next_states).to(self.device)
-        dones = torch.FloatTensor(rs).unsqueeze(1).to(self.device)
-        entropies = torch.FloatTensor(rs).unsqueeze(1).to(self.device)
+        states = torch.FloatTensor(np.array(states)).to(self.device)
+        last_actions = torch.FloatTensor(np.array(last_actions)).to(self.device)
+        actions = torch.FloatTensor(np.array(actions)).to(self.device)
+        action_log_probs = torch.FloatTensor(np.array(action_log_probs)).unsqueeze(1).to(self.device)
+        rewards = torch.FloatTensor(np.array(rs)).unsqueeze(1).to(self.device)
+        next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
+        dones = torch.FloatTensor(np.array(rs)).unsqueeze(1).to(self.device)
+        entropies = torch.FloatTensor(np.array(entropies)).unsqueeze(1).to(self.device)
 
-        values = self.critic(states)
-        next_values = self.critic(next_states).detach()
+        values = self.actor_critic(states, last_actions, mode="value")
+        next_values = self.actor_critic(next_states, actions, mode="value").detach()
 
         # Calculate GAE and returns
         deltas = rewards + self.gamma * next_values * (1 - dones) - values
         advantages = torch.zeros_like(deltas)
         for t in reversed(range(len(deltas))):
-            advantages[t] = deltas[t] + (self.gamma * self.gae_lambda * advantages[t + 1] * (1 - dones[t]))
+            if t == len(deltas) - 1:
+                advantages[t] = deltas[t]
+            else:
+                advantages[t] = deltas[t] + (self.gamma * self.gae_lambda * advantages[t + 1] * (1 - dones[t]))
 
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        returns = advantages + values
-        dataset = TensorDataset(states, actions, action_log_probs, returns, advantages)
+        dataset = TensorDataset(states, last_actions, actions, action_log_probs, advantages)
         loader = DataLoader(dataset, batch_size=self.minibatch_size, shuffle=True)
 
         # PPO updates
         for _ in range(self.ppo_epochs):
             for batch in loader:
-                batch_states, batch_actions, batch_old_log_probs, batch_returns, batch_advantages = batch
+                batch_states, batch_last_actions, batch_actions, batch_old_log_probs, batch_advantages = batch
+                print(batch_last_actions.shape)
 
-                dist = self.actor(batch_states)
-                new_log_probs = dist.log_prob(batch_actions)
+                mean = self.actor_critic(batch_states, batch_last_actions, mode="actor")
+                std = torch.exp(self.log_std)
+                dist = Normal(mean, std)
+
+                new_log_probs = dist.log_prob(batch_actions).sum(dim=-1, keepdim=True)
                 entropy = dist.entropy().mean()
-                new_values = self.critic(batch_states).squeeze()
 
                 # Calculate ratios
                 ratios = (new_log_probs - batch_old_log_probs).exp()
@@ -598,30 +611,32 @@ class PPO:
                 surr2 = torch.clamp(ratios, 1.0 - self.clip_epsilon, 1.0 + self.clip_epsilon) * batch_advantages
                 actor_loss = -torch.min(surr1, surr2).mean() - self.ent_coef * entropy
 
-                critic_loss = F.mse_loss(new_values, batch_returns)
+                critic_loss = batch_advantages.mean()
+
+                total_loss = actor_loss + critic_loss
 
                 # Update actor
                 self.actor_optimizer.zero_grad()
-                actor_loss.backward()
+                self.value_optimizer.zero_grad()
+                total_loss.backward()
                 self.actor_optimizer.step()
+                self.value_optimizer.step()
 
-                # Update critic
-                self.critic_optimizer.zero_grad()
-                critic_loss.backward()
-                self.critic_optimizer.step()
 
-        self.replay_buffer = []
     def run(self):
         for _ in range(self.num_episodes):
-            state = self.env.reset()
+            self.actor_critic.train()
+            state = self.train_env.reset()
             done = False
             while not done:
                 action, log_prob, entropy = self.select_action(state)
-                next_state, reward, done, _ = self.env.step(action)
-                self.store_transition((state, action, log_prob, reward, next_state, done, entropy))
+                next_state, reward, done, _ = self.train_env.step(action)
+                self.store_transition((state["state"], state["last_action"], action, log_prob, reward,
+                                       next_state["state"], next_state["last_action"], done, entropy))
                 state = next_state
 
-                if len(self.replay_buffer) >= self.buffer_size:
+                if len(self.train_replay_buffer) >= self.buffer_size:
+                    print("start train")
                     self.train()
 
 

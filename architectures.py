@@ -680,6 +680,19 @@ class CustomGPM(nn.Module):
             nn.Linear(hidden_size, 1),
         )
 
+        #Value
+        self.value_conv = nn.Conv2d(in_channels=2 * feature_size,
+                                      out_channels=1,
+                                      kernel_size=(1, 1))
+        self.value_final = nn.Sequential(
+            nn.Linear(portfolio_size + 1, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 1),
+        )
+
+
 
     def pf(self, observation):
         """portfolio features given input x.
@@ -745,9 +758,9 @@ class CustomGPM(nn.Module):
         cash_bias = torch.zeros_like(cash_bias).to(self.device)
 
         features = self.pf(observation) # shape [N, 2 * feature_size, portfolio_size, 1]
-        features = torch.cat([stocks, features], dim=1)  # shape [N, 2 * feature_size + 1, portfolio_size, 1]
 
         if mode == "actor":
+            features = torch.cat([stocks, features], dim=1)  # shape [N, 2 * feature_size + 1, portfolio_size, 1]
             output = self.actor_conv(features)  # shape [N, 1, portfolio_size, 1]
             output = torch.cat(
                 [cash_bias, output], dim=2
@@ -759,6 +772,7 @@ class CustomGPM(nn.Module):
             output = self.actor_final(output)  # shape [N, portfolio_size + 1]
 
         elif mode == "critic1":
+            features = torch.cat([stocks, features], dim=1)  # shape [N, 2 * feature_size + 1, portfolio_size, 1]
             output = self.critic_conv1(features)  # shape [N, 1, portfolio_size, 1]
             output = torch.cat(
                 [cash_bias, output], dim=2
@@ -768,7 +782,9 @@ class CustomGPM(nn.Module):
             output = torch.squeeze(output, 1)  # shape [N, portfolio_size + 1]
 
             output = self.critic_final1(output)  # shape [N, portfolio_size + 1]
-        else:
+
+        elif mode == "critic2":
+            features = torch.cat([stocks, features], dim=1)  # shape [N, 2 * feature_size + 1, portfolio_size, 1]
             output = self.critic_conv2(features)  # shape [N, 1, portfolio_size, 1]
             output = torch.cat(
                 [cash_bias, output], dim=2
@@ -778,6 +794,17 @@ class CustomGPM(nn.Module):
             output = torch.squeeze(output, 1)  # shape [N, portfolio_size + 1]
 
             output = self.critic_final2(output)  # shape [N, portfolio_size + 1]
+
+        else: #value
+            output = self.value_conv(features)  # shape [N, 1, portfolio_size, 1]
+            output = torch.cat(
+                [cash_bias, output], dim=2
+            )  # shape [N, 1, portfolio_size + 1, 1]
+
+            output = torch.squeeze(output, 3)
+            output = torch.squeeze(output, 1)  # shape [N, portfolio_size + 1]
+
+            output = self.value_final(output)  # shape [N, portfolio_size + 1]
 
         return output
 
@@ -792,6 +819,9 @@ class CustomGPM(nn.Module):
 
     def track_critic2_parameters(self):
         return list(self.critic_conv2.parameters()) + list(self.critic_final2.parameters())
+
+    def track_value_parameters(self):
+        return list(self.value_conv.parameters()) + list(self.value_final.parameters())
 
     def _process_last_action(self, last_action):
         """Process the last action to retrieve cash bias and last stocks.
