@@ -873,3 +873,249 @@ class CustomGPM(nn.Module):
                 [batch_edge_type, torch.clone(edge_type).detach()]
             )
         return batch_edge_type
+class GPMPolicy(ActorCriticPolicy):
+    def __init__(
+            self,
+            observation_space,
+            action_space,
+            lr_schedule,
+            edge_index,
+            edge_type,
+            nodes_to_select,
+            initial_features=3,
+            k_short=3,
+            k_medium=21,
+            conv_mid_features=3,
+            conv_final_features=20,
+            graph_layers=1,
+            time_window=50,
+            softmax_temperature=1,
+            custom_device="cpu",
+            use_sde=False,
+            **kwargs
+    ):
+        super(GPMPolicy, self).__init__(
+            observation_space,
+            action_space,
+            lr_schedule,
+            use_sde=use_sde,
+            **kwargs
+        )
+
+        self.custom_device = custom_device
+        self.softmax_temperature = softmax_temperature
+        self.action_dim = self.action_space.shape[0]
+
+        num_relations = np.unique(edge_type).shape[0]
+
+        if isinstance(edge_index, np.ndarray):
+            edge_index = torch.from_numpy(edge_index)
+        self.edge_index = edge_index.to(self.custom_device).long()
+
+        if isinstance(edge_type, np.ndarray):
+            edge_type = torch.from_numpy(edge_type)
+        self.edge_type = edge_type.to(self.custom_device).long()
+
+        if isinstance(nodes_to_select, np.ndarray):
+            nodes_to_select = torch.from_numpy(nodes_to_select)
+        elif isinstance(nodes_to_select, list):
+            nodes_to_select = torch.tensor(nodes_to_select)
+        self.nodes_to_select = nodes_to_select.to(self.custom_device)
+
+        n_short = time_window - k_short + 1
+        n_medium = time_window - k_medium + 1
+        n_long = time_window
+
+        self.short_term = nn.Sequential(
+            nn.Conv2d(
+                in_channels=initial_features,
+                out_channels=conv_mid_features,
+                kernel_size=(1, k_short),
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=conv_mid_features,
+                out_channels=conv_final_features,
+                kernel_size=(1, n_short),
+            ),
+            nn.ReLU(),
+        )
+
+        self.mid_term = nn.Sequential(
+            nn.Conv2d(
+                in_channels=initial_features,
+                out_channels=conv_mid_features,
+                kernel_size=(1, k_medium),
+            ),
+            nn.ReLU(),
+            nn.Conv2d(
+                in_channels=conv_mid_features,
+                out_channels=conv_final_features,
+                kernel_size=(1, n_medium),
+            ),
+            nn.ReLU(),
+        )
+
+        self.long_term = nn.Sequential(nn.MaxPool2d(kernel_size=(1, n_long)), nn.ReLU())
+
+        feature_size = 2 * conv_final_features + initial_features
+
+        graph_layers_list = []
+        for i in range(graph_layers):
+            graph_layers_list += [
+                (
+                    RGCNConv(feature_size, feature_size, num_relations),
+                    "x, edge_index, edge_type -> x",
+                ),
+                nn.LeakyReLU(),
+            ]
+
+        self.gcn = Sequential("x, edge_index, edge_type", graph_layers_list)
+
+        self.final_convolution = nn.Conv2d(
+            in_channels=2 * feature_size + 1,
+            out_channels=1,
+            kernel_size=(1, 1),
+        )
+
+        self.softmax = nn.Sequential(nn.Softmax(dim=-1))
+
+        # Adjust the features_dim based on the dimensions of the output tensor
+        self.features_dim = action_space.shape[0]  # portfolio_size + 1
+
+        mlp_extractor = create_mlp(
+            input_dim=self.features_dim,
+            output_dim=64,  # MLP output dimension will be determined by the last layer
+            net_arch=[64, 64],
+            activation_fn=nn.ReLU
+        )
+        self.mlp_extractor = nn.Sequential(*mlp_extractor)
+
+        self.action_net = nn.Linear(64, self.action_space.shape[0])
+        self.value_net = nn.Linear(64, 1)
+
+        self.log_std = nn.Parameter(torch.zeros(self.action_space.shape[0]), requires_grad=True)
+
+    def _get_action_dist_from_latent(self, latent_pi):
+        mean_actions = self.action_net(latent_pi)
+        action_distribution = DiagGaussianDistribution(self.action_dim)
+        action_distribution.proba_distribution(mean_actions, self.log_std)
+        return action_distribution
+
+    def _get_latent(self, obs):
+        if isinstance(obs, dict):
+            observation = obs.get("state", None)
+            last_action = obs.get("last_action", None)
+        else:
+            raise ValueError("Observation must be a dictionary with keys 'state' and 'last_action'.")
+
+        if observation is None or last_action is None:
+            raise ValueError("Observation dictionary must contain 'state' and 'last_action'.")
+
+        if isinstance(observation, np.ndarray):
+            observation = torch.from_numpy(observation)
+        observation = observation.to(self.custom_device).float()
+
+        if isinstance(last_action, np.ndarray):
+            last_action = torch.from_numpy(last_action)
+        last_action = last_action.to(self.custom_device).float()
+
+        last_stocks, cash_bias = self._process_last_action(last_action)
+        cash_bias = torch.zeros_like(cash_bias).to(self.custom_device)
+
+        short_features = self.short_term(observation)
+        medium_features = self.mid_term(observation)
+        long_features = self.long_term(observation)
+
+        temporal_features = torch.cat(
+            [short_features, medium_features, long_features], dim=1
+        )  # shape [N, feature_size, num_stocks, 1]
+
+        graph_batch = self._create_graph_batch(temporal_features, self.edge_index)
+        edge_type = self._create_edge_type_for_batch(graph_batch, self.edge_type)
+
+        graph_features = self.gcn(
+            graph_batch.x, graph_batch.edge_index, edge_type
+        )  # shape [N * num_stocks, feature_size]
+        graph_features, _ = to_dense_batch(
+            graph_features, graph_batch.batch
+        )  # shape [N, num_stocks, feature_size]
+        graph_features = torch.transpose(
+            graph_features, 1, 2
+        )  # shape [N, feature_size, num_stocks]
+        graph_features = torch.unsqueeze(
+            graph_features, 3
+        )  # shape [N, feature_size, num_stocks, 1]
+        graph_features = graph_features.to(self.custom_device)
+
+        features = torch.cat(
+            [temporal_features, graph_features], dim=1
+        )  # shape [N, 2 * feature_size, num_stocks, 1]
+
+        features = torch.index_select(
+            features, dim=2, index=self.nodes_to_select
+        )  # shape [N, 2 * feature_size, portfolio_size, 1]
+        features = torch.cat([last_stocks, features], dim=1)
+
+        output = self.final_convolution(features)  # shape [N, 1, portfolio_size, 1]
+        output = torch.cat(
+            [cash_bias, output], dim=2
+        )  # shape [N, 1, portfolio_size + 1, 1]
+
+        output = torch.squeeze(output, 3)
+        output = torch.squeeze(output, 1)  # shape [N, portfolio_size + 1]
+
+        output = self.softmax(output / self.softmax_temperature)
+
+        # Reshape the output tensor to match the expected input dimensions of the MLP extractor
+        output = output.view(output.size(0), -1)
+
+        latent_pi = self.mlp_extractor(output)
+        return latent_pi
+
+    def forward(self, obs, deterministic=False, **kwargs):
+        latent_pi = self._get_latent(obs)
+        action_distribution = self._get_action_dist_from_latent(latent_pi)
+        actions = action_distribution.get_actions(deterministic=deterministic)
+        log_prob = action_distribution.log_prob(actions)
+        values = self.value_net(latent_pi)
+        return actions, values, log_prob
+
+    def _predict(self, observation, deterministic=False):
+        latent_pi = self._get_latent(observation)
+        action_distribution = self._get_action_dist_from_latent(latent_pi)
+        actions = action_distribution.get_actions(deterministic=deterministic)
+        return actions
+
+    def evaluate_actions(self, obs, actions):
+        latent_pi = self._get_latent(obs)
+        distribution = self._get_action_dist_from_latent(latent_pi)
+        log_prob = distribution.log_prob(actions)
+        entropy = distribution.entropy()
+        values = self.value_net(latent_pi)
+        return values, log_prob, entropy
+
+    def _process_last_action(self, last_action):
+        batch_size = last_action.shape[0]
+        stocks = last_action.shape[1] - 1
+        last_stocks = last_action[:, 1:].reshape((batch_size, 1, stocks, 1))
+        cash_bias = last_action[:, 0].reshape((batch_size, 1, 1, 1))
+        return last_stocks, cash_bias
+
+    def _create_graph_batch(self, features, edge_index):
+        batch_size = features.shape[0]
+        graphs = []
+        for i in range(batch_size):
+            x = features[i, :, :, 0]  # shape [feature_size, num_stocks]
+            x = torch.transpose(x, 0, 1)  # shape [num_stocks, feature_size]
+            new_graph = Data(x=x, edge_index=edge_index).to(self.custom_device)
+            graphs.append(new_graph)
+        return Batch.from_data_list(graphs)
+
+    def _create_edge_type_for_batch(self, batch, edge_type):
+        batch_edge_type = torch.clone(edge_type).detach()
+        for i in range(1, batch.batch_size):
+            batch_edge_type = torch.cat(
+                [batch_edge_type, torch.clone(edge_type).detach()]
+            )
+        return batch_edge_type
